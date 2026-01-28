@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
+import ReactMarkdown from 'react-markdown';
 import { TaxResults } from './utils/taxCalculator';
 import { ParsedForm16Data, ALLOWED_FILE_TYPES, MAX_FILE_SIZE } from './utils/documentParser';
 
@@ -35,8 +36,8 @@ const InputField: React.FC<InputFieldProps> = ({
       onChange={onChange}
       placeholder={placeholder}
       className={`w-full rounded-md bg-neutral-800 border text-white px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500 placeholder-gray-500 transition-all duration-300 ${highlighted
-          ? 'border-emerald-500 ring-2 ring-emerald-500/30 bg-emerald-950/20'
-          : 'border-neutral-700'
+        ? 'border-emerald-500 ring-2 ring-emerald-500/30 bg-emerald-950/20'
+        : 'border-neutral-700'
         }`}
     />
   </div>
@@ -137,10 +138,10 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
       <div
         {...getRootProps()}
         className={`relative border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all duration-200 ${isDragActive
-            ? 'border-indigo-500 bg-indigo-950/30'
-            : isUploading
-              ? 'border-neutral-600 bg-neutral-800/50 cursor-wait'
-              : 'border-neutral-700 hover:border-indigo-500 hover:bg-neutral-800/50'
+          ? 'border-indigo-500 bg-indigo-950/30'
+          : isUploading
+            ? 'border-neutral-600 bg-neutral-800/50 cursor-wait'
+            : 'border-neutral-700 hover:border-indigo-500 hover:bg-neutral-800/50'
           }`}
       >
         <input {...getInputProps()} />
@@ -177,10 +178,10 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({
       {uploadStatus.type && (
         <div
           className={`px-4 py-2 rounded-lg text-sm ${uploadStatus.type === 'success'
-              ? 'bg-emerald-950/50 text-emerald-400 border border-emerald-800'
-              : uploadStatus.type === 'error'
-                ? 'bg-red-950/50 text-red-400 border border-red-800'
-                : 'bg-indigo-950/50 text-indigo-400 border border-indigo-800'
+            ? 'bg-emerald-950/50 text-emerald-400 border border-emerald-800'
+            : uploadStatus.type === 'error'
+              ? 'bg-red-950/50 text-red-400 border border-red-800'
+              : 'bg-indigo-950/50 text-indigo-400 border border-indigo-800'
             }`}
         >
           {uploadStatus.message}
@@ -452,7 +453,19 @@ export default function Page() {
         {advice && (
           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-6 space-y-4">
             <h2 className="text-xl font-semibold text-white">AI Advice</h2>
-            <p className="text-gray-300 whitespace-pre-line">{advice}</p>
+            <div className="prose prose-invert max-w-none text-gray-300">
+              <ReactMarkdown
+                components={{
+                  h3: (props: any) => <h3 className="text-lg font-bold text-indigo-400 mt-4 mb-2" {...props} />,
+                  ul: (props: any) => <ul className="list-disc pl-5 space-y-2 mb-4" {...props} />,
+                  li: (props: any) => <li className="text-gray-300" {...props} />,
+                  p: (props: any) => <p className="leading-relaxed mb-4" {...props} />,
+                  strong: (props: any) => <strong className="font-semibold text-white" {...props} />,
+                }}
+              >
+                {advice}
+              </ReactMarkdown>
+            </div>
           </div>
         )}
       </div>

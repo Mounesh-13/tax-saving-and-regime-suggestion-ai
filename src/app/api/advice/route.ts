@@ -14,35 +14,18 @@ export const runtime = "nodejs";
 // ---- Gemini setup ----
 const apiKey = process.env.GEMINI_API_KEY;
 
-const modelNames = [
-  "gemini-2.0-flash",          // Confirmed available
-  "gemini-1.5-flash",          // Standard stable
-  "gemini-1.5-pro",            // Standard pro
-  "gemini-2.0-flash-exp",      // Experimental
+const preferredModels = [
+  "gemini-3-pro-preview",
+  "gemini-2.5-pro",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.0-flash", // User requested
+  "gemini-2.0-flash-exp",
+  "gemini-1.5-flash", // Reliable fallback
+  "gemini-1.5-pro",
 ];
 
-let model: GenerativeModel | null = null;
-let modelName = "unknown";
-
-if (apiKey) {
-  const genAI = new GoogleGenerativeAI(apiKey);
-
-  // Try to initialize with the first available model
-  for (const name of modelNames) {
-    try {
-      model = genAI.getGenerativeModel({ model: name });
-      modelName = name;
-      console.log(`✅ Gemini model initialized: ${modelName}`);
-      break; // Success, stop trying
-    } catch (err) {
-      console.warn(`⚠️ Failed to initialize ${name}, trying next...`);
-    }
-  }
-
-  if (!model) {
-    console.error("❌ Failed to initialize any Gemini model");
-  }
-} else {
+if (!apiKey) {
   console.warn("⚠️ GEMINI_API_KEY not found in environment variables");
 }
 
@@ -177,31 +160,26 @@ This guidance is based on the provided inputs and FY 2023-24 (AY 2024-25) rules.
 `.trim();
 
     // 3) Call Gemini safely
-    let advice =
-      "No AI advice available (Gemini API key missing or model unavailable).";
-    if (model) {
-      try {
-        const response = await model.generateContent(prompt);
-        advice = response.response.text();
-      } catch (err: unknown) {
-        console.error("❌ Gemini API error:", err);
+    // 3) Call Gemini safely with fallback
+    let advice = "No AI advice available (Gemini API key missing or all models failed).";
+    let usedModelName = null;
 
-        // Log detailed error information
-        if (err instanceof Error) {
-          console.error("Error message:", err.message);
-          console.error("Error stack:", err.stack);
-        }
+    if (apiKey) {
+      const genAI = new GoogleGenerativeAI(apiKey);
 
-        // Check if it's a specific API error
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        if (errorMessage.includes("API_KEY")) {
-          advice = "API Key error: Please verify your GEMINI_API_KEY in .env.local is valid.";
-        } else if (errorMessage.includes("quota") || errorMessage.includes("RESOURCE_EXHAUSTED")) {
-          advice = "API quota exceeded. Please check your Gemini API usage limits.";
-        } else if (errorMessage.includes("not found") || errorMessage.includes("404")) {
-          advice = `Model '${modelName}' not found. The model may not be available in your region or API tier.`;
-        } else {
-          advice = `Failed to fetch AI advice: ${errorMessage}. The numeric results above are accurate.`;
+      for (const name of preferredModels) {
+        try {
+          console.log(`🤖 Attempting to generate advice with model: ${name}`);
+          const model = genAI.getGenerativeModel({ model: name });
+          const response = await model.generateContent(prompt);
+
+          advice = response.response.text();
+          usedModelName = name;
+          console.log(`✅ Success with model: ${name}`);
+          break; // Stop loop on success
+        } catch (err: unknown) {
+          console.warn(`⚠️ Model ${name} failed:`, err instanceof Error ? err.message : String(err));
+          // Continue to next model
         }
       }
     }
@@ -209,7 +187,7 @@ This guidance is based on the provided inputs and FY 2023-24 (AY 2024-25) rules.
     // 4) Always return JSON (never HTML)
     return NextResponse.json({
       success: true,
-      model: model ? modelName : null,
+      model: usedModelName || "none",
       inputs,
       results,
       advice,

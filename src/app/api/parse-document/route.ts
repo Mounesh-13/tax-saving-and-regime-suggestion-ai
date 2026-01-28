@@ -16,10 +16,14 @@ const apiKey = process.env.GEMINI_API_KEY;
 
 // Models with vision capability
 const visionModelNames = [
+    "gemini-3-pro-preview",
+    "gemini-2.5-pro",
     "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-2.0-flash",
+    "gemini-2.0-flash-exp",
     "gemini-1.5-flash",
-    "gemini-pro-vision",
+    "gemini-1.5-pro",
 ];
 
 export async function POST(req: NextRequest) {
@@ -83,27 +87,9 @@ export async function POST(req: NextRequest) {
 
         // Initialize Gemini
         const genAI = new GoogleGenerativeAI(apiKey);
-        let model = null;
+        let result = null;
         let modelName = "";
-
-        // Try vision-capable models
-        for (const name of visionModelNames) {
-            try {
-                model = genAI.getGenerativeModel({ model: name });
-                modelName = name;
-                console.log(`✅ Using vision model: ${modelName}`);
-                break;
-            } catch {
-                console.warn(`⚠️ Failed to initialize ${name}, trying next...`);
-            }
-        }
-
-        if (!model) {
-            return NextResponse.json(
-                { success: false, error: "No vision-capable Gemini model available" },
-                { status: 500 }
-            );
-        }
+        let usedModel = false;
 
         // Prepare content for Gemini
         const imagePart = {
@@ -115,11 +101,34 @@ export async function POST(req: NextRequest) {
 
         console.log(`📄 Processing ${file.name} (${file.type}, ${(file.size / 1024).toFixed(1)}KB)`);
 
-        // Call Gemini Vision API
-        const result = await model.generateContent([
-            FORM16_EXTRACTION_PROMPT,
-            imagePart,
-        ]);
+        // Try vision-capable models in order
+        for (const name of visionModelNames) {
+            try {
+                console.log(`🤖 Attempting parsing with model: ${name}`);
+                const model = genAI.getGenerativeModel({ model: name });
+
+                // Actual generation attempt
+                result = await model.generateContent([
+                    FORM16_EXTRACTION_PROMPT,
+                    imagePart,
+                ]);
+
+                modelName = name;
+                usedModel = true;
+                console.log(`✅ Success with vision model: ${name}`);
+                break;
+            } catch (err: unknown) {
+                console.warn(`⚠️ Failed with ${name}:`, err instanceof Error ? err.message : String(err));
+                // Continue to next model
+            }
+        }
+
+        if (!usedModel || !result) {
+            return NextResponse.json(
+                { success: false, error: "All available Gemini models failed to process the document." },
+                { status: 500 }
+            );
+        }
 
         const responseText = result.response.text();
         console.log("📥 Gemini response:", responseText.substring(0, 500) + "...");

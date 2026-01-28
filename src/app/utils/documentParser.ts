@@ -89,40 +89,89 @@ export function getMimeType(file: File): string {
  * Gemini prompt for extracting Form 16 data
  * This prompt is carefully crafted to extract accurate values from Indian Form 16
  */
+/**
+ * Gemini prompt for extracting Form 16 data
+ * This prompt is carefully crafted to extract accurate values from Indian Form 16
+ * It uses "Chain of Verification" by asking for evidence (text found near the value).
+ */
 export const FORM16_EXTRACTION_PROMPT = `
 You are an expert Form 16 (Indian income tax) document parser. 
 Analyze this Form 16 document image/PDF and extract the following financial data.
 
 CRITICAL INSTRUCTIONS:
-1. Return ONLY a valid JSON object - no markdown, no explanations, no code blocks
-2. All monetary values must be NUMBERS ONLY (no commas, no ₹ symbol, no "Rs")
-3. If a field is not clearly visible or not found, use null
-4. Look primarily in PART B of Form 16 for income and deduction details
-5. Be precise - double-check numbers against the document
+1. You must return a valid JSON object.
+2. For every field, you must provide:
+   - "value": The extracted number (or string for names/PAN).
+   - "evidence": The exact text verification found near the value on the document.
+3. All monetary "value" fields must be NUMBERS ONLY (no commas, no ₹).
+4. If a field is not found, set "value" to null.
 
 FIELDS TO EXTRACT:
 {
-  "grossSalary": <number - Look for "Gross Salary" or "Total Salary as per section 17(1)" in Part B>,
-  "basicSalary": <number - Look for "Basic Salary" or "Basic/DA" in salary breakup. If not found, estimate as 40-50% of gross>,
-  "hraReceived": <number - Look for "House Rent Allowance" or "HRA" in allowances section>,
-  "rentPaid": <number - usually not in Form 16, set to null>,
-  "deduction80c": <number - Look for "Deduction under Chapter VI-A: 80C/80CCC/80CCD(1)" total>,
-  "deduction80d": <number - Look for "80D" (Medical Insurance) in Chapter VI-A deductions>,
-  "npsContribution": <number - Look for "80CCD(1B)" or "NPS" in Chapter VI-A deductions>,
-  "homeLoanInterest": <number - Look for "Deduction u/s 24" or "Interest on Housing Loan">,
-  "deduction80tta": <number - Look for "80TTA" or "80TTB" in Chapter VI-A deductions>,
-  "totalTaxDeducted": <number - Look for "Tax Payable" or "Total TDS" at the bottom>,
-  "employerName": <string - Company/Employer name from Part A>,
-  "employeeName": <string - Employee name>,
-  "pan": <string - PAN number of employee>,
-  "financialYear": <string - e.g., "2023-24">
+  "grossSalary": {
+    "value": <number>,
+    "evidence": <string - Look for "Gross Salary", "Gross Total Income", or "Section 17(1)". Value is usually in the outer column.>
+  },
+  "basicSalary": {
+    "value": <number>,
+    "evidence": <string - Look for "Basic Salary", "Basic/DA". If not found, look for "Section 10" exemptions that might hint at it.>
+  },
+  "hraReceived": {
+    "value": <number>,
+    "evidence": <string - Look for "House Rent Allowance", "HRA", or "Section 10(13A)">
+  },
+  "rentPaid": {
+    "value": <number|null>,
+    "evidence": <string - usually not in Form 16, set null unless explicitly visible>
+  },
+  "deduction80c": {
+    "value": <number>,
+    "evidence": <string - Look for "Chapter VI-A", "Section 80C", "80CCC", "80CCD(1)". Sum them if multiple.>
+  },
+  "deduction80d": {
+    "value": <number>,
+    "evidence": <string - Look for "Section 80D" (Medical Insurance)>
+  },
+  "npsContribution": {
+    "value": <number>,
+    "evidence": <string - Look for "Section 80CCD(1B)" or "NPS" (up to 50k usually)>
+  },
+  "homeLoanInterest": {
+    "value": <number>,
+    "evidence": <string - Look for "Section 24(b)", "Interest on Housing Loan", "Loss from House Property">
+  },
+  "deduction80tta": {
+    "value": <number>,
+    "evidence": <string - Look for "Section 80TTA", "80TTB" (Savings Interest deductions)>
+  },
+  "totalTaxDeducted": {
+    "value": <number>,
+    "evidence": <string - Look for "Total Tax Payable", "Total TDS Deducted", "Net Tax Payable">
+  },
+  "employerName": {
+    "value": <string>,
+    "evidence": <string - Name of employer from Part A>
+  },
+  "employeeName": {
+    "value": <string>,
+    "evidence": <string - Name of employee>
+  },
+  "pan": {
+    "value": <string>,
+    "evidence": <string - PAN number of employee>
+  },
+  "financialYear": {
+    "value": <string>,
+    "evidence": <string - Assessment Year or Financial Year>
+  }
 }
 
-IMPORTANT LOCATIONS IN FORM 16:
-- Part A: Employer/Employee details, TAN, PAN, TDS summary
-- Part B: Detailed salary breakup, allowances, deductions under Chapter VI-A
+IMPORTANT LOCATIONS:
+- Part B is the most important for figures.
+- Verify column headers. amounts are often in the last "Amount" column.
+- Do not confirm a value unless you see the label next to it (or in the header row).
 
-Return ONLY the JSON object, nothing else.
+Return ONLY the JSON.
 `;
 
 /**
@@ -148,9 +197,8 @@ export function parseGeminiResponse(responseText: string): ParsedForm16Data {
     };
 
     try {
-        // Clean the response - remove potential markdown code blocks
+        // Clean the response
         let cleanResponse = responseText.trim();
-
         // Remove markdown code block if present
         if (cleanResponse.startsWith('```json')) {
             cleanResponse = cleanResponse.slice(7);
@@ -164,22 +212,48 @@ export function parseGeminiResponse(responseText: string): ParsedForm16Data {
 
         const parsed = JSON.parse(cleanResponse);
 
-        // Validate and sanitize each field
+        // Helper to extract value whether it's nested (Chain of Verification) or flat
+        const extractValue = (field: any) => {
+            if (field === null || field === undefined) return null;
+            if (typeof field === 'object' && field !== null && 'value' in field) {
+                // Log evidence for debugging if needed
+                // console.log(`Evidence for field: ${field.evidence}`);
+                return field.value;
+            }
+            return field;
+        };
+
+        // Extract values
+        const grossSalary = extractValue(parsed.grossSalary);
+        const basicSalary = extractValue(parsed.basicSalary);
+        const hraReceived = extractValue(parsed.hraReceived);
+        const rentPaid = extractValue(parsed.rentPaid);
+        const deduction80c = extractValue(parsed.deduction80c);
+        const deduction80d = extractValue(parsed.deduction80d);
+        const npsContribution = extractValue(parsed.npsContribution);
+        const homeLoanInterest = extractValue(parsed.homeLoanInterest);
+        const deduction80tta = extractValue(parsed.deduction80tta);
+        const totalTaxDeducted = extractValue(parsed.totalTaxDeducted);
+        const employerName = extractValue(parsed.employerName);
+        const employeeName = extractValue(parsed.employeeName);
+        const pan = extractValue(parsed.pan);
+        const financialYear = extractValue(parsed.financialYear);
+
         return {
-            grossSalary: sanitizeNumber(parsed.grossSalary),
-            basicSalary: sanitizeNumber(parsed.basicSalary),
-            hraReceived: sanitizeNumber(parsed.hraReceived),
-            rentPaid: sanitizeNumber(parsed.rentPaid),
-            deduction80c: sanitizeNumber(parsed.deduction80c),
-            deduction80d: sanitizeNumber(parsed.deduction80d),
-            npsContribution: sanitizeNumber(parsed.npsContribution),
-            homeLoanInterest: sanitizeNumber(parsed.homeLoanInterest),
-            deduction80tta: sanitizeNumber(parsed.deduction80tta),
-            totalTaxDeducted: sanitizeNumber(parsed.totalTaxDeducted),
-            employerName: sanitizeString(parsed.employerName),
-            employeeName: sanitizeString(parsed.employeeName),
-            pan: sanitizeString(parsed.pan),
-            financialYear: sanitizeString(parsed.financialYear),
+            grossSalary: sanitizeNumber(grossSalary),
+            basicSalary: sanitizeNumber(basicSalary),
+            hraReceived: sanitizeNumber(hraReceived),
+            rentPaid: sanitizeNumber(rentPaid),
+            deduction80c: sanitizeNumber(deduction80c),
+            deduction80d: sanitizeNumber(deduction80d),
+            npsContribution: sanitizeNumber(npsContribution),
+            homeLoanInterest: sanitizeNumber(homeLoanInterest),
+            deduction80tta: sanitizeNumber(deduction80tta),
+            totalTaxDeducted: sanitizeNumber(totalTaxDeducted),
+            employerName: sanitizeString(employerName),
+            employeeName: sanitizeString(employeeName),
+            pan: sanitizeString(pan),
+            financialYear: sanitizeString(financialYear),
         };
     } catch (error) {
         console.error('Failed to parse Gemini response:', error);
